@@ -1,0 +1,228 @@
+(*
+  PQXDH; proving authenticity and secrecy
+  Author: jake ginesin
+
+  model assumption #1: same key is used for signing and encryption (i.e. X25519)
+*)
+
+free m1: bitstring [private].
+free m2: bitstring [private].
+
+set selFun = Nounifset.   
+(*
+set simpEqAll = false. 
+set simpEqAll = false. 
+set redundancyElim = best.
+set redundantHypElim = true.  
+set simplifyProcess = true.
+set stopTerm = false.
+*)
+
+free c: channel.
+free a: channel. (* channel for the attacker *)
+free p: channel [private]. (* For the distribution of public keys with integrity and authenticity - verification happens out of band. This is a standard assumption. *)
+
+(* Symmetric key encryption *)
+
+type key.
+
+fun senc(key, bitstring): bitstring.
+reduc forall m: bitstring, k: key; sdec(k, senc(k,m)) = m.
+
+(* Asymmetric key encryption *)
+
+type skey.
+type pkey.
+
+fun rb(pkey): bitstring [data].
+fun pk(skey): pkey.
+
+(* Digital signatures *)
+
+fun sign(skey, bitstring): bitstring.
+fun okay():bitstring.
+reduc forall m: bitstring, sk: skey; checksign(pk(sk), m, sign(sk, m)) = okay.
+
+(* MACs *)
+fun mac(key, bitstring): bitstring.
+reduc forall k: key, m: bitstring; checkmac(k, m, mac(k, m)) = okay.
+
+(* Diffie-Hellman *)
+(* DH -> Public^Private *)
+
+fun dh(pkey, skey): key.
+equation forall a: skey, b: skey; dh(pk(a), b) = dh(pk(b), a). (* symmetry of DH *)
+
+(* the concat functions *)
+fun hkdf1(bitstring): key [data].
+
+fun khash(key): key.
+
+fun hkdf2_dev1(key): key [data].
+fun hkdf2_dev2(key): key [data].
+letfun hkdf2(k: key) =
+  (hkdf2_dev1(k), hkdf2_dev2(k)).
+
+
+fun hkdf4_dev1(key, key): key [data].
+fun hkdf4_dev2(key, key): key [data].
+letfun hkdf4(k1: key, k2: key) =  
+  (hkdf4_dev1(k1, k2), hkdf4_dev2(k1, k2)).
+
+(* KEM encapsulation *)
+type kempriv.
+type kempub.
+
+fun kempk(kempriv):kempub.
+fun penc(kempub, bitstring):bitstring.
+(* fun pdec(kempriv,bitstring):bitstring. *)
+reduc forall sk: kempriv, m:bitstring; pdec(sk, penc(kempk(sk), m)) = m.
+
+letfun kempriv2pub(k:kempriv) = kempk(k).
+
+letfun pqkem_enc(pk:kempub) =
+       new ss:bitstring;
+       (penc(pk,ss),ss).
+       
+letfun pqkem_dec(sk:kempriv,ct:bitstring) =
+       pdec(sk,ct).
+
+fun qb(kempub): bitstring [data].
+
+(* the concats *)
+
+fun concat1(bitstring, pkey, pkey, bitstring): bitstring [data].
+fun concat2(key, key, key, key, bitstring): bitstring [data].
+fun concat3(bitstring, pkey): bitstring [data].
+
+(* events *)
+event sendE1(bitstring, key).
+event recvE1(bitstring, key).
+event sendE2(bitstring, key).
+event recvE2(bitstring, key).
+
+event compromiseSKA(skey).
+event compromiseSKB(skey).
+event breakDH(key, key, key, key).
+event masterLeak(key).
+
+event start().
+
+let PeerA(SK_A: skey, PK_A: pkey, PK_B: pkey) =
+
+  new ae1: skey;
+  new ae2: skey;
+  let gae1 = pk(ae1) in
+  let gae2 = pk(ae2) in 
+
+  (* generate amaster and enc msg (PHASE 1) *)
+  phase 1;
+
+  in(c, (gbssig: bitstring, gbs: pkey, gbo: pkey, gpqbo: kempub, gpqbsig: bitstring));
+  if checksign(PK_B, rb(gbs), gbssig) = okay then 
+  if checksign(PK_B, qb(gpqbo), gpqbsig) = okay then
+  let (ct: bitstring, ss: bitstring) = pqkem_enc(gpqbo) in
+
+  let amaster = hkdf1(concat2(dh(gbs, SK_A), dh(PK_B, ae1), dh(gbs, ae1), dh(gbo, ae1), ss)) in
+  let (ra1: key, ca1: key) = hkdf2(amaster) in (* derive the root and chain key *)
+
+  let mak1 = khash(ca1) in
+  let (mak1_auth: key, mak1_enc: key) = hkdf2(mak1) in
+
+  let x1 = senc(mak1_enc, m1) in 
+  let x1_mac = mac(mak1_auth, concat1(x1, gae1, gae2, ct)) in
+  event sendE1(m1, mak1);
+
+  out(c, (x1, x1_mac, gae1, gae2, ct));
+
+  (* second stage *)
+
+  phase 2;
+
+  in(c, (x2: bitstring, x2_mac: bitstring, gtb2: pkey));
+
+  let (ra2: key, ca2: key) = hkdf4(ra1, dh(gtb2, ae2)) in
+  let mak2 = khash(ca2) in
+  let (mak2_auth: key, mak2_enc: key) = hkdf2(mak2) in
+
+  if checkmac(mak2_auth, concat3(x2, gtb2), x2_mac) = okay then
+  let m2 = sdec(mak2_enc, x2) in
+  event recvE2(m2, mak2);
+
+  phase 3; 
+  event breakDH(dh(gbs, SK_A), dh(PK_B, ae1), dh(gbs, ae1), dh(gbo, ae1));
+  out(a, (dh(gbs, SK_A), dh(PK_B, ae1), dh(gbs, ae1), dh(gbo, ae1)));
+
+  phase 4;
+  event masterLeak(amaster);
+  out(a, amaster);
+
+  0.
+
+let PeerB(SK_B: skey, PK_B: pkey, PK_A: pkey) =
+  new bo: skey;
+  new bs: skey;
+  new pqbo: kempriv;
+
+  let gbs = pk(bs) in
+  let gbo = pk(bo) in
+  let gpqbo = kempk(pqbo) in
+  let gbssig = sign(SK_B, rb(gbs)) in
+  let gpqbsig = sign(SK_B, qb(gpqbo)) in 
+  out(c, (gbssig, gbs, gbo, gpqbo, gpqbsig));
+  phase 1; (* peer B commits first *)
+
+  (* first stage: derive bmaster, verfiy a's msgs, decrypt prekey message, reply *)
+
+  in(c, (x1: bitstring, x1_mac: bitstring, gae1: pkey, gae2: pkey, ct: bitstring)); 
+  let ss = pqkem_dec(pqbo, ct) in 
+
+  let bmaster = hkdf1(concat2(dh(PK_A, bs), dh(gae1, SK_B), dh(gae1, bs), dh(gae1, bo), ss)) in
+  let (rb1: key, cb1: key) = hkdf2(bmaster) in (* derive the root and chain key *)
+
+  let mbk1 = khash(cb1) in
+  let (mbk1_auth: key, mbk1_enc: key) = hkdf2(mbk1) in
+  if checkmac(mbk1_auth, concat1(x1, gae1, gae2, ct), x1_mac) = okay then 
+  let m1 = sdec(mbk1_enc, x1) in 
+  event recvE1(m1, mbk1);
+
+  (* second stage *)
+  phase 2;
+
+  new tb2: skey;
+  let gtb2 = pk(tb2) in 
+
+  let (rb2: key, cb2: key) = hkdf4(rb1, dh(gae2, tb2)) in
+  let mbk2 = khash(cb2) in
+  let (mbk2_auth: key, mbk2_enc: key) = hkdf2(mbk2) in
+
+  let x2 = senc(mbk2_enc, m2) in 
+  let x2_mac = mac(mbk2_auth, concat3(x2, gtb2)) in
+  event sendE2(m2, mbk2);
+
+  out(c, (x2, x2_mac, gtb2));
+
+  0.
+
+
+(* post-compromise security: compromise of the master key results in the compromise of the 
+   message in the same ratchet session, but the next ratchet session's messages are fine *)
+query k1: key; (event(masterLeak(k1)) && attacker(m2)) ==> false.
+query k1: key; attacker(m1) ==> event(masterLeak(k1)).
+
+query event(start()). (* reachable from all possible executions *)
+
+(* reachability *) 
+query m: bitstring, rk: key; event(recvE1(m, rk)). (* reachable from all executions *)
+query m: bitstring, rk: key; event(recvE2(m, rk)). (* reachable from all executions *)
+query m: bitstring, rk: key; event(sendE1(m, rk)). (* reachable from all executions *)
+query m: bitstring, rk: key; event(sendE2(m, rk)). (* rechable from all executions *)
+
+process
+  new SK_A: skey; let PK_A = pk(SK_A) in 
+  new SK_B: skey; let PK_B = pk(SK_B) in
+  out(a, PK_A);
+  out(a, PK_B);
+  event start();
+  ( (PeerA(SK_A, PK_A, PK_B)) |
+    (PeerB(SK_B, PK_B, PK_A)))
