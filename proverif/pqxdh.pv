@@ -1,12 +1,11 @@
 (*
-  PQXDH; proving authenticity and secrecy
+  PQXDH; proving authenticity, secrecy, forward secrecy, and quantum forward secrecy
   Author: jake ginesin
 
   model assumption #1: same key is used for signing and encryption (i.e. X25519)
 *)
 
 free m1: bitstring [private].
-free m2: bitstring [private].
 
 set selFun = Nounifset.   
 (*
@@ -63,12 +62,6 @@ fun hkdf2_dev2(key): key [data].
 letfun hkdf2(k: key) =
   (hkdf2_dev1(k), hkdf2_dev2(k)).
 
-
-fun hkdf4_dev1(key, key): key [data].
-fun hkdf4_dev2(key, key): key [data].
-letfun hkdf4(k1: key, k2: key) =  
-  (hkdf4_dev1(k1, k2), hkdf4_dev2(k1, k2)).
-
 (* KEM encapsulation *)
 type kempriv.
 type kempub.
@@ -91,20 +84,16 @@ fun qb(kempub): bitstring [data].
 
 (* the concats *)
 
-fun concat1(bitstring, pkey, pkey, bitstring): bitstring [data].
+fun concat1(bitstring, pkey, bitstring): bitstring [data].
 fun concat2(key, key, key, key, bitstring): bitstring [data].
-fun concat3(bitstring, pkey): bitstring [data].
 
 (* events *)
 event sendE1(bitstring, key).
 event recvE1(bitstring, key).
-event sendE2(bitstring, key).
-event recvE2(bitstring, key).
 
 event compromiseSKA(skey).
 event compromiseSKB(skey).
 event breakDH(key, key, key, key).
-event masterLeak(key).
 
 event start().
 
@@ -130,33 +119,18 @@ let PeerA(SK_A: skey, PK_A: pkey, PK_B: pkey) =
   let (mak1_auth: key, mak1_enc: key) = hkdf2(mak1) in
 
   let x1 = senc(mak1_enc, m1) in 
-  let x1_mac = mac(mak1_auth, concat1(x1, gae1, gae2, ct)) in
+  let x1_mac = mac(mak1_auth, concat1(x1, gae1, ct)) in
   event sendE1(m1, mak1);
 
-  out(c, (x1, x1_mac, gae1, gae2, ct));
-
-  (* second stage *)
+  out(c, (x1, x1_mac, gae1, ct));
 
   phase 2;
-
-  in(c, (x2: bitstring, x2_mac: bitstring, gtb2: pkey));
-
-  let (ra2: key, ca2: key) = hkdf4(ra1, dh(gtb2, ae2)) in
-  let mak2 = khash(ca2) in
-  let (mak2_auth: key, mak2_enc: key) = hkdf2(mak2) in
-
-  if checkmac(mak2_auth, concat3(x2, gtb2), x2_mac) = okay then
-  let m2 = sdec(mak2_enc, x2) in
-  event recvE2(m2, mak2);
+  event compromiseSKA(SK_A);
+  out(a, SK_A);
 
   phase 3; 
   event breakDH(dh(gbs, SK_A), dh(PK_B, ae1), dh(gbs, ae1), dh(gbo, ae1));
   out(a, (dh(gbs, SK_A), dh(PK_B, ae1), dh(gbs, ae1), dh(gbo, ae1)));
-
-  phase 4;
-  event masterLeak(amaster);
-  out(a, amaster);
-
   0.
 
 let PeerB(SK_B: skey, PK_B: pkey, PK_A: pkey) =
@@ -174,7 +148,7 @@ let PeerB(SK_B: skey, PK_B: pkey, PK_A: pkey) =
 
   (* first stage: derive bmaster, verfiy a's msgs, decrypt prekey message, reply *)
 
-  in(c, (x1: bitstring, x1_mac: bitstring, gae1: pkey, gae2: pkey, ct: bitstring)); 
+  in(c, (x1: bitstring, x1_mac: bitstring, gae1: pkey, ct: bitstring)); 
   let ss = pqkem_dec(pqbo, ct) in 
 
   let bmaster = hkdf1(concat2(dh(PK_A, bs), dh(gae1, SK_B), dh(gae1, bs), dh(gae1, bo), ss)) in
@@ -182,41 +156,34 @@ let PeerB(SK_B: skey, PK_B: pkey, PK_A: pkey) =
 
   let mbk1 = khash(cb1) in
   let (mbk1_auth: key, mbk1_enc: key) = hkdf2(mbk1) in
-  if checkmac(mbk1_auth, concat1(x1, gae1, gae2, ct), x1_mac) = okay then 
+  if checkmac(mbk1_auth, concat1(x1, gae1, ct), x1_mac) = okay then 
   let m1 = sdec(mbk1_enc, x1) in 
   event recvE1(m1, mbk1);
 
-  (* second stage *)
   phase 2;
-
-  new tb2: skey;
-  let gtb2 = pk(tb2) in 
-
-  let (rb2: key, cb2: key) = hkdf4(rb1, dh(gae2, tb2)) in
-  let mbk2 = khash(cb2) in
-  let (mbk2_auth: key, mbk2_enc: key) = hkdf2(mbk2) in
-
-  let x2 = senc(mbk2_enc, m2) in 
-  let x2_mac = mac(mbk2_auth, concat3(x2, gtb2)) in
-  event sendE2(m2, mbk2);
-
-  out(c, (x2, x2_mac, gtb2));
+  event compromiseSKB(SK_B);
+  out(a, SK_B);
 
   0.
 
-
-(* post-compromise security: compromise of the master key results in the compromise of the 
-   message in the same ratchet session, but the next ratchet session's messages are fine *)
-query k1: key; (event(masterLeak(k1)) && attacker(m2)) ==> false.
-query k1: key; attacker(m1) ==> event(masterLeak(k1)).
-
 query event(start()). (* reachable from all possible executions *)
+
+
+(* forward secrecy *)
+query sk1: skey, sk2: skey; (event(compromiseSKA(sk1)) && event(compromiseSKB(sk2)) && attacker(m1)) ==> false.
+
+(* secrecy *)
+query attacker(m1). 
+
+(* forward pq secrecy *)
+query k1: key, k2: key, k3: key, k4: key; (event(breakDH(k1, k2, k3, k4)) && attacker(m1)) ==> false.
+
+(* auth *)
+query m: bitstring, rk: key; event(recvE1(m, rk)) ==> event(sendE1(m, rk)).
 
 (* reachability *) 
 query m: bitstring, rk: key; event(recvE1(m, rk)). (* reachable from all executions *)
-query m: bitstring, rk: key; event(recvE2(m, rk)). (* reachable from all executions *)
 query m: bitstring, rk: key; event(sendE1(m, rk)). (* reachable from all executions *)
-query m: bitstring, rk: key; event(sendE2(m, rk)). (* rechable from all executions *)
 
 process
   new SK_A: skey; let PK_A = pk(SK_A) in 
