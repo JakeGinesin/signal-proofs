@@ -1,10 +1,11 @@
-Formally verifying Signal's [PQXDH](https://signal.org/docs/specifications/pqxdh/) + [Double Ratchet](https://signal.org/docs/specifications/doubleratchet/) with [ProVerif](https://en.wikipedia.org/wiki/ProVerif). The [existing state-of-the-art models of Signal](https://github.com/Inria-Prosecco/pqxdh-analysis/blob/main/revision3/proverif/pqxdh-model.cpp.pv) in the symbolic cryptographic model don't capture PQXDH composed with the double ratchet, and the properties are a touch verbose. So, I've written more approachable models and more concisely defined properties. I also mechanized [previous offline initiator deniability results for PQXDH](https://eprint.iacr.org/2024/741.pdf).
+Additional reference models for Signal's [PQXDH](https://signal.org/docs/specifications/pqxdh/) + [Sparse Post Quantum Ratchet](https://signal.org/blog/spqr/) with [ProVerif](https://en.wikipedia.org/wiki/ProVerif). 
+
+The [existing state-of-the-art models of Signal](https://github.com/Inria-Prosecco/pqxdh-analysis/blob/main/revision3/proverif/pqxdh-model.cpp.pv) in the symbolic cryptographic model don't capture PQXDH composed with the double ratchet, and the properties are a touch verbose. So, I've written more approachable models and more concisely defined properties. I also mechanized [previous offline deniability results for PQXDH](https://eprint.iacr.org/2024/741.pdf).
 
 In sum, I prove:
 - secrecy, authentication, and forward secrecy for [X3DH](https://signal.org/docs/specifications/x3dh/) in `x3dh.pv`
 - secrecy, authentication, forward secrecy, and post-quantum forward secrecy for PQXDH in `pqxdh.pv`
-- secrecy, authentication, forward secrecy, and post-quantum forward secrecy for PQXDH composed with Double Ratchet in `signal.pv`
-- post-compromise security for PQXDH composed with Double Ratchet in `signal-pcs.pv`
+- secrecy, authentication, forward secrecy, post-compromise security, and post-quantum forward secrecy for PQXDH composed with Double Ratchet in `signal.pv`
 - deniability for the initiator in the offline judge model for PQXDH composed with Double Ratchet in `signal-initiator-deny.pv`. 
 - showing deniability for the responder in the offline judge model does not hold for PQXDH with Double Ratchet in `signal-initiator-nodeny.pv`
 
