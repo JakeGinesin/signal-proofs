@@ -1,6 +1,6 @@
 Additional reference models for Signal's [PQXDH](https://signal.org/docs/specifications/pqxdh/) + [Sparse Post Quantum Ratchet](https://signal.org/blog/spqr/), written in [ProVerif](https://en.wikipedia.org/wiki/ProVerif). 
 
-The models of Signal [from Inria](https://github.com/Inria-Prosecco/pqxdh-analysis) and [from the Signal Foundation](https://github.com/signalapp/SparsePostQuantumRatchet/tree/main/proofs/proverif) don't capture PQXDH composed with the double ratchet, and the properties are a touch verbose. So, I've written more approachable models and more concisely defined properties. I also mechanized [previous offline deniability results for PQXDH](https://eprint.iacr.org/2024/741.pdf).
+The models of Signal [from Inria](https://github.com/Inria-Prosecco/pqxdh-analysis) and [from the Signal Foundation](https://github.com/signalapp/SparsePostQuantumRatchet/tree/main/proofs/proverif) don't capture PQXDH composed with the double ratchet, and the properties are a touch verbose. So, I've written more approachable models with concise properties. I also mechanized [previous offline deniability results for PQXDH](https://eprint.iacr.org/2024/741.pdf).
 
 In sum, I prove:
 - secrecy, authentication, and forward secrecy for [X3DH](https://signal.org/docs/specifications/x3dh/) in `x3dh.pv`
